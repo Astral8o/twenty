@@ -1,0 +1,107 @@
+name: re5-crm
+
+x-twenty-env: &twenty-env
+  PG_DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD}@db:5432/${PG_DATABASE_NAME:-default}
+  REDIS_URL: redis://redis:6379
+  SERVER_URL: https://${CRM_DOMAIN}
+
+  IS_MULTIWORKSPACE_ENABLED: "true"
+  DEFAULT_SUBDOMAIN: ${DEFAULT_SUBDOMAIN:-app}
+  IS_WORKSPACE_CREATION_LIMITED_TO_SERVER_ADMINS: "true"
+
+  STORAGE_TYPE: local
+
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY:-}
+
+  EMAIL_DRIVER: ${EMAIL_DRIVER:-LOGGER}
+  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+  EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Re5 CRM}
+  EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
+  EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-465}
+  EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+  EMAIL_SMTP_PASSWORD: ${EMAIL_SMTP_PASSWORD:-}
+
+services:
+  caddy:
+    build: ./caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CRM_DOMAIN: ${CRM_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+
+  server:
+    image: ${RE5_IMAGE:-ghcr.io/astral8o/twenty}:${TAG:-latest}
+    restart: always
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    environment:
+      <<: *twenty-env
+      NODE_PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: curl --fail http://localhost:3000/healthz
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  worker:
+    image: ${RE5_IMAGE:-ghcr.io/astral8o/twenty}:${TAG:-latest}
+    restart: always
+    command: ["yarn", "worker:prod"]
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    environment:
+      <<: *twenty-env
+      # The server container runs these on startup
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+    depends_on:
+      server:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    restart: always
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${PG_DATABASE_NAME:-default}
+      POSTGRES_USER: ${PG_DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_DATABASE_PASSWORD}
+    healthcheck:
+      test: pg_isready -U ${PG_DATABASE_USER:-postgres} -h localhost -d postgres
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: always
+    command: ["--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db-data:
+  server-local-data:
+  caddy-data:
+  caddy-config:

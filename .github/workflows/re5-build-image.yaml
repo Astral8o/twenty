@@ -1,0 +1,67 @@
+name: Re5 build image
+
+# Builds the Re5 CRM image (server + frontend) and pushes it to
+# ghcr.io/<owner>/twenty. See re5/README.md.
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    branches: [re5]
+    paths-ignore:
+      - 're5/README.md'
+      - 're5/deploy/**'
+  workflow_dispatch:
+
+concurrency:
+  group: re5-build-image
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Read upstream version
+        id: version
+        run: echo "app_version=$(tr -d '[:space:]' < re5/UPSTREAM_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set image name
+        id: image
+        # GHCR image names must be lowercase
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/twenty-docker/twenty/Dockerfile
+          target: twenty
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.app_version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Re5 CRM (based on Twenty)
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ steps.version.outputs.app_version }}
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

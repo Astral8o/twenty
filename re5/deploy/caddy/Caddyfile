@@ -1,0 +1,11 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$CRM_DOMAIN}, *.{$CRM_DOMAIN} {
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+	}
+	encode zstd gzip
+	reverse_proxy server:3000
+}
